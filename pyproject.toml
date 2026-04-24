@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "statement-extract"
+version = "0.0.1"
+description = "Convert bank and credit-card statement PDFs to structured data with header + detail validation"
+requires-python = ">=3.11"
+dependencies = [
+    "pdfplumber>=0.11",
+    "pydantic>=2.6",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+]
+
+[project.scripts]
+statement-extract = "bank_pdf_extract.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bank_pdf_extract"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

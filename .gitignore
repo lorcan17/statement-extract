@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.venv/
+venv/
+.env
+.DS_Store
+
+# Statement files and extracted output are local-only — never commit real account data
+*.pdf
+*.csv
+/out/
+
+# Tests gitignored until the expected.json refactor lands (see Foundry STATUS.md).
+# Real fixtures live in ~/Documents/finance-lake-fixtures/. Test source previously
+# embedded PII in assertions (holder names, balances, merchant strings).
+tests/
+
+# Claude Code local settings
+.claude/settings.local.json
