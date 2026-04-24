@@ -28,16 +28,19 @@ _NOISE_PREFIXES = (
     "Page ", "Customer Service:", "Prepared For", "Statement of Account", "Your Transactions",
     "Transaction Posting", "Date Date", "Total of", "New Payments", "New Transactions",
     "Other Account", "About Your", "Category Daily", "Membership Rewards", "Account Summary from",
-    "americanexpress.ca", "Prepared For", "LORCAN TRAVERS", "AMERICAN EXPRESS", "THIS STATEMENT IS",
-    "American Express Cobalt Card", "GRACE WILLIAMS", "LORCAN TRAVERS",
+    "americanexpress.ca", "AMERICAN EXPRESS", "THIS STATEMENT IS",
+    "American Express Cobalt Card",
 )
+
+_SUPP_HOLDER = re.compile(r"New Transactions for\s*([A-Z][A-Z\-'\.]+(?:\s+[A-Z][A-Z\-'\.]+)+)")
 
 
 def parse(pdf_path: Path) -> tuple[CreditCardHeader, list[CreditCardDetail]]:
     with pdfplumber.open(str(pdf_path)) as pdf:
         pages = [p.extract_text() or "" for p in pdf.pages]
-    
-    header = _parse_header(pages)
+
+    holders = _extract_holders(pages)
+    header = _parse_header(pages, holders)
     # Transactions start on Page 2 and end before Page 6 (About Your Credit Limit)
     trans_text = ""
     for p in pages[1:]:
@@ -45,9 +48,26 @@ def parse(pdf_path: Path) -> tuple[CreditCardHeader, list[CreditCardDetail]]:
             trans_text += p.split("About Your Credit Limit")[0]
             break
         trans_text += p + "\n"
-        
-    details = _parse_details(trans_text, header)
+
+    details = _parse_details(trans_text, header, holders)
     return header, details
+
+
+def _extract_holders(pages: list[str]) -> list[str]:
+    """Primary holder from the account header line; supplementary from per-card sections."""
+    holders: list[str] = []
+    primary_m = re.search(
+        rf"^(.+?)\s+(XXXX\s+XXXXX\d\s+\d{{5}})\s+({_M}\s*\d{{1,2}},\s+\d{{4}})\s+({_M}\s*\d{{1,2}},\s+\d{{4}})",
+        pages[0], re.MULTILINE,
+    )
+    if primary_m:
+        holders.append(primary_m.group(1).strip())
+    for page in pages:
+        for m in _SUPP_HOLDER.finditer(page):
+            name = m.group(1).strip()
+            if name and name not in holders:
+                holders.append(name)
+    return holders
 
 
 def build_statement(header: CreditCardHeader, details: list[CreditCardDetail]) -> CreditCardStatement:
@@ -146,18 +166,18 @@ def _parse_csv_date(s: str) -> date:
 
 # --- header parsing ---------------------------------------------------------
 
-def _parse_header(pages: list[str]) -> CreditCardHeader:
+def _parse_header(pages: list[str], holders: list[str]) -> CreditCardHeader:
     text = pages[0]
-    
-    # "LORCAN TRAVERS XXXX XXXXX4 32008 Feb15, 2026 Mar14, 2026"
+
+    # Header line: "<HOLDER> XXXX XXXXX4 32008 Feb15, 2026 Mar14, 2026"
     header_line = re.search(
         rf"^(.+?)\s+(XXXX\s+XXXXX\d\s+(\d{{5}}))\s+({_M}\s*\d{{1,2}},\s+\d{{4}})\s+({_M}\s*\d{{1,2}},\s+\d{{4}})",
         text, re.MULTILINE
     )
     if not header_line:
         raise ValueError("Main header line not found")
-        
-    holder = header_line.group(1).strip()
+
+    holder = " / ".join(holders) if holders else header_line.group(1).strip()
     last5 = header_line.group(3)
     period_start = _parse_long_date(header_line.group(4))
     period_end = _parse_long_date(header_line.group(5))
@@ -241,10 +261,11 @@ def _parse_rewards(pages: list[str]) -> MembershipRewards | None:
     return None
 
 
-def _parse_details(text: str, header: CreditCardHeader) -> list[CreditCardDetail]:
+def _parse_details(text: str, header: CreditCardHeader, holders: list[str]) -> list[CreditCardDetail]:
     details: list[CreditCardDetail] = []
     pending: dict | None = None
     current_card = header.card_number_last4
+    noise_prefixes = _NOISE_PREFIXES + tuple(holders)
 
     def flush() -> None:
         nonlocal pending
@@ -277,15 +298,14 @@ def _parse_details(text: str, header: CreditCardHeader) -> list[CreditCardDetail
 
     for raw in text.splitlines():
         ln = raw.strip()
-        if not ln or any(ln.startswith(p) for p in _NOISE_PREFIXES):
+        if not ln or any(ln.startswith(p) for p in noise_prefixes):
             continue
             
         # Switch current card if we see "New Transactions for..."
         if ln.startswith("New Transactions for"):
-             # "New Transactions forGRACE WILLIAMS"
-             # We don't have the last 4 for supplementary cards easily from text
-             # but we can try to find it or just use holder name.
-             # Actually, the CSV has Account # field.
+             # "New Transactions for<SUPPLEMENTARY HOLDER>" — supplementary
+             # card holders are already captured in the holder list; we don't
+             # resolve their last-4 from text (Amex omits it here).
              pass
 
         m = _TRANS_HEAD.match(ln)

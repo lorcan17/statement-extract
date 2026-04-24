@@ -46,23 +46,25 @@ def parse(pdf_path: Path) -> tuple[DepositAccountHeader, list[DepositAccountDeta
     period_start = date(int(period_m.group(3)), _MONTH_MAP[period_m.group(1).capitalize()], int(period_m.group(2)))
     period_end = date(int(period_m.group(6)), _MONTH_MAP[period_m.group(4).capitalize()], int(period_m.group(5)))
     
-    # Holder name - usually on the second line after "MMM YYYY Statement"
-    holder = "Grace Williams" # Default
+    # Holder name — usually on the same line preceding "Account #", or
+    # in the address block above it.
+    holder = ""
     lines = text.splitlines()
-    for ln in lines:
+    for i, ln in enumerate(lines):
         if "Account #" in ln:
-            # Name is usually on the same line as Account # or right before it
-            if "Account #" in ln:
-                 parts = ln.split("Account #")
-                 if parts[0].strip():
-                      holder = parts[0].strip()
-                 else:
-                      # Check previous lines for common names
-                      pass
+            parts = ln.split("Account #")
+            if parts[0].strip():
+                holder = parts[0].strip()
+            else:
+                # Walk back up to 5 lines looking for a name-like line
+                for j in range(i - 1, max(-1, i - 6), -1):
+                    cand = lines[j].strip()
+                    if cand and not cand.endswith("Statement") and not re.search(r"\d", cand):
+                        holder = cand
+                        break
             break
-    # Hardcoded known holder for this project if detection is fuzzy
     if holder.endswith("Statement"):
-         holder = "Grace Williams"
+        holder = ""
 
     def get_money(label: str, pattern: str = r"([-]?\s*\$?[\d,]+\.\d{2})") -> Decimal:
         m = re.search(label + r"\s+" + pattern, text)

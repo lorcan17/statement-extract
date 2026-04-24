@@ -32,9 +32,31 @@ _SHORT_TRANS_LINE = re.compile(rf"^(\d{{2}})\s+({_M})\s+(\d{{2}})\s+(.+?)\s+([\d
 def parse(pdf_path: Path) -> MultiAccountDepositStatement:
     with pdfplumber.open(str(pdf_path)) as pdf:
         all_lines = []
+        page1_text = pdf.pages[0].extract_text() or "" if pdf.pages else ""
         for p in pdf.pages:
             text = p.extract_text() or ""
             all_lines.extend(text.splitlines())
+
+    # Coast Capital prints the canonical holder line immediately after
+    # "Statement of Account for" — joint accounts render as
+    # "<Title>.<Name1> / <Title>.<Name2>".
+    holder_m = re.search(r"Statement of Account for\s*\n\s*(.+)", page1_text)
+    account_holder = holder_m.group(1).strip() if holder_m else ""
+    # Don't add holder names to noise prefixes: transaction descriptions
+    # often embed a holder name (e.g. card-payment lines), so dropping
+    # those lines would break multi-line description stitching.
+    noise_names: tuple[str, ...] = ()
+
+    # Branch name is the first non-empty line on page 1 (Coast Capital
+    # prints it as a standalone heading). Transit number isn't printed on
+    # chequing statements — leave empty.
+    branch_name = ""
+    for ln in page1_text.splitlines():
+        ln = ln.strip()
+        if ln and not re.match(r"^[\d\s\-()]+$", ln):
+            branch_name = ln
+            break
+    transit_number = ""
     
     # Global header info from Page 1
     period_m = None
@@ -79,6 +101,8 @@ def parse(pdf_path: Path) -> MultiAccountDepositStatement:
         ln = line.strip()
         if not ln or ln.startswith("CONTINUED...") or "PAGE" in ln or "MEMBER NUMBER" in ln:
             continue
+        if any(ln.startswith(n) for n in noise_names):
+            continue
             
         # Check for start of new account header
         header_m = re.search(r"([A-Za-z\-\s]+(?:Account|Acct))\s+WITHDRAWALS\s+DEPOSITS\s+BALANCE", ln)
@@ -104,10 +128,10 @@ def parse(pdf_path: Path) -> MultiAccountDepositStatement:
                     bank=BANK,
                     product=PRODUCT,
                     account_type=last_header_title,
-                    account_holder="LORCAN TRAVERS / GRACE WILLIAMS",
+                    account_holder=account_holder,
                     account_number=new_acc_num,
-                    branch_name="West Broadway",
-                    transit_number="81010",
+                    branch_name=branch_name,
+                    transit_number=transit_number,
                     plan_name=last_header_title,
                     period_start=period_start,
                     period_end=period_end,

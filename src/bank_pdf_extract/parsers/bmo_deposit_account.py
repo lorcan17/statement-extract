@@ -242,8 +242,8 @@ def _camel_to_snake(s: str) -> str:
 
 
 def _extract_owner(text: str) -> str:
-    """Owner name — either from the squished all-caps line (`MSGRACEWILLIAMS`)
-    or the spaced `MS GRACE WILLIAMS` form in the address block.
+    """Owner name — either from the squished all-caps line (e.g. `MSFIRSTLAST`)
+    or the spaced `MS FIRST LAST` form in the address block.
     """
     # Address-block form: two-or-more capitalised words followed by a street number.
     m = re.search(

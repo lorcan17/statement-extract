@@ -23,8 +23,8 @@ _NOISE_PREFIXES = (
     "CONTACT US", "Account Number Ending", "Cardholder Service", "Credit Limit",
     "Available Credit", "Annual Interest Rate", "Daily Interest Rate",
     "New Balance", "Minimum Payment Due", "Payment Due Date", "Amount Past Due",
-    "An amount preceded", "See reverse side", "Please retain", "LORCAN TRAVERS",
-    "COAST CAPITAL FSC", "C/O Collabria", "#450, 110-9th Ave", "Calgary, AB",
+    "An amount preceded", "See reverse side", "Please retain",
+    "COAST CAPITAL FSC", "C/O Collabria",
     "TRANSACTIONS", "Tran Post Reference", "Date Date Description Number",
     "FEES", "TOTAL FEES", "INTEREST", "Interest Charge on", "TOTAL INTEREST",
     "TOTAL *FINANCE CHARGE*", "INTEREST CHARGED", "Type of Balance", "REWARDS",
@@ -37,7 +37,10 @@ _NOISE_PREFIXES = (
 def parse(pdf_path: Path) -> tuple[CreditCardHeader, list[CreditCardDetail]]:
     with pdfplumber.open(str(pdf_path)) as pdf:
         pages = [p.extract_text() or "" for p in pdf.pages]
-    
+
+    # Collabria-issued Coast Capital statements don't print the cardholder
+    # name on page 1 — leave account_holder empty and let downstream join
+    # against cards-of-record if needed.
     header = _parse_header(pages)
     details = _parse_details(pages, header)
     return header, details
@@ -92,7 +95,7 @@ def _parse_header(pages: list[str]) -> CreditCardHeader:
     return CreditCardHeader(
         bank=BANK,
         product=PRODUCT,
-        account_holder="LORCAN TRAVERS", # Hardcoded or find on p1
+        account_holder="",
         card_number_last4=",".join(sorted(list(set(card_nrs)))),
         statement_date=period_end,
         period_start=period_start,
@@ -132,11 +135,12 @@ def _parse_rewards(pages: list[str]) -> CollabriaRewards | None:
 def _parse_details(pages: list[str], header: CreditCardHeader) -> list[CreditCardDetail]:
     details: list[CreditCardDetail] = []
     current_card = ""
-    
+    noise_prefixes = _NOISE_PREFIXES
+
     # Process pages starting from transaction list (usually page 3)
     # but some might be on page 1 if list is short.
     full_text = "\n".join(pages)
-    
+
     # Find the TRANSACTIONS section
     if "TRANSACTIONS" in full_text:
         trans_section = full_text.split("TRANSACTIONS", 1)[1]
@@ -145,7 +149,7 @@ def _parse_details(pages: list[str], header: CreditCardHeader) -> list[CreditCar
 
     for line in trans_section.splitlines():
         ln = line.strip()
-        if not ln or any(ln.startswith(p) for p in _NOISE_PREFIXES):
+        if not ln or any(ln.startswith(p) for p in noise_prefixes):
             continue
             
         # Check for card header "Account 3534"
