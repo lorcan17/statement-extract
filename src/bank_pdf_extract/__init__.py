@@ -1,3 +1,4 @@
+from .detect import PARSERS, derive_metadata, detect_parser
 from .schema import (
     DepositAccountDetail,
     DepositAccountHeader,
@@ -5,6 +6,7 @@ from .schema import (
     CreditCardDetail,
     CreditCardHeader,
     CreditCardStatement,
+    MultiAccountDepositStatement,
 )
 
 __all__ = [
@@ -14,4 +16,8 @@ __all__ = [
     "DepositAccountHeader",
     "DepositAccountDetail",
     "DepositAccountStatement",
+    "MultiAccountDepositStatement",
+    "PARSERS",
+    "detect_parser",
+    "derive_metadata",
 ]

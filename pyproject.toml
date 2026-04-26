@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "statement-extract"
-version = "0.0.1"
+version = "0.1.0"
 description = "Convert bank and credit-card statement PDFs to structured data with header + detail validation"
 requires-python = ">=3.11"
 dependencies = [
