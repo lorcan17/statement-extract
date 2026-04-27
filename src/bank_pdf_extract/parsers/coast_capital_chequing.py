@@ -25,16 +25,27 @@ _MONTH_MAP = {
 _M = "(?:" + "|".join(_MONTH_MAP) + ")"
 
 # 26 MAR 25 Interac e-Transfer Debit 476.00 5,900.07
-_TRANS_LINE = re.compile(rf"^(\d{{2}})\s+({_M})\s+(\d{{2}})\s+(.+?)\s+([\d,]+\.\d{{2}})\s+([\d,]+\.\d{{2}})$")
+# Trailing " OD" marks an overdraft on the running balance (e.g. "3.40 OD").
+_TRANS_LINE = re.compile(rf"^(\d{{2}})\s+({_M})\s+(\d{{2}})\s+(.+?)\s+([\d,]+\.\d{{2}})\s+([\d,]+\.\d{{2}})(\s+OD)?$")
 # 01 APR 25 Interest Paid 0.35 0.95
-_SHORT_TRANS_LINE = re.compile(rf"^(\d{{2}})\s+({_M})\s+(\d{{2}})\s+(.+?)\s+([\d,]+\.\d{{2}})$")
+_SHORT_TRANS_LINE = re.compile(rf"^(\d{{2}})\s+({_M})\s+(\d{{2}})\s+(.+?)\s+([\d,]+\.\d{{2}})(\s+OD)?$")
+
+_CID_RE = re.compile(r"\(cid:\d+\)")
+
 
 def parse(pdf_path: Path) -> MultiAccountDepositStatement:
+    # Some Coast Capital statements (Oct 2024 onward) embed glyphs the PDF font
+    # doesn't map cleanly, so pdfplumber emits `(cid:NN)` placeholders inline
+    # — typically standing in for spaces. Strip them at extraction time so the
+    # downstream regexes see normal whitespace.
+    def _clean(t: str) -> str:
+        return _CID_RE.sub(" ", t)
+
     with pdfplumber.open(str(pdf_path)) as pdf:
         all_lines = []
-        page1_text = pdf.pages[0].extract_text() or "" if pdf.pages else ""
+        page1_text = _clean(pdf.pages[0].extract_text() or "") if pdf.pages else ""
         for p in pdf.pages:
-            text = p.extract_text() or ""
+            text = _clean(p.extract_text() or "")
             all_lines.extend(text.splitlines())
 
     # Coast Capital prints the canonical holder line immediately after
@@ -194,9 +205,14 @@ def parse(pdf_path: Path) -> MultiAccountDepositStatement:
             desc = match.group(4)
             if m:
                 val2 = Decimal(m.group(6).replace(",", ""))
+                od_marker = m.group(7)
             else:
                 val2 = Decimal(ms.group(5).replace(",", ""))
-            
+                od_marker = ms.group(6)
+            if od_marker:
+                # "3.40 OD" → overdraft, running balance is negative.
+                val2 = -val2
+
             prev_bal = current_details[-1].running_balance if current_details else current_acc_header.opening_balance
             amount = val2 - prev_bal
             
@@ -226,6 +242,9 @@ def parse(pdf_path: Path) -> MultiAccountDepositStatement:
 
 def validate_internal(stmt: MultiAccountDepositStatement) -> list[str]:
     issues = []
+    if not stmt.accounts:
+        issues.append("no accounts parsed (parser produced an empty statement)")
+        return issues
     for acc in stmt.accounts:
         h = acc.header
         d = acc.details
