@@ -9,7 +9,9 @@
       systems = [ "x86_64-linux" "aarch64-darwin" ];
 
       perSystem = { pkgs, ... }: {
-        packages.default = pkgs.python312Packages.buildPythonApplication {
+        # buildPythonPackage so consumers (finance-lake) can `import
+        # bank_pdf_extract` from python.withPackages, not just run the CLI.
+        packages.default = pkgs.python312Packages.buildPythonPackage {
           pname = "statement-extract";
           version = "0.0.1";
           pyproject = true;
