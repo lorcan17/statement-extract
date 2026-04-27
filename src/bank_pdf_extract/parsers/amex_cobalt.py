@@ -79,15 +79,32 @@ def build_statement(header: CreditCardHeader, details: list[CreditCardDetail]) -
 def validate_internal(header: CreditCardHeader, details: list[CreditCardDetail]) -> list[str]:
     issues: list[str] = []
     
-    # In Amex, "Payments and credits" (header) usually only matches the "New Payments" section.
-    # Other negative amounts (refunds) are typically bundled into "Purchases".
-    payments_sum = sum((d.amount for d in details if "PAYMENT RECEIVED" in d.description.upper()), Decimal("0"))
-    # Header payments_and_credits is positive
-    if abs(payments_sum) != header.payments_and_credits:
-         issues.append(f"payments_and_credits: header={header.payments_and_credits} detail_sum={abs(payments_sum)}")
-         
-    # Purchases in header includes refunds (negative transactions that are not payments)
-    purchases_sum = sum((d.amount for d in details if "PAYMENT RECEIVED" not in d.description.upper() and "MEMBERSHIP FEE INSTALLMENT" not in d.description.upper()), Decimal("0"))
+    # Amex header buckets:
+    #   "Less Payments"      → "PAYMENT RECEIVED" rows (in New Payments section)
+    #   "Less Other Credits" → points-redemption refunds in the "Other Account
+    #                          Transactions" section ("Shop with Points" / "Pay with Points")
+    #   "Plus Fees"          → "MEMBERSHIP FEE INSTALLMENT" rows
+    #   "Plus Purchases"     → everything else (incl. ordinary merchant refunds)
+    def _is_payment(d):
+        u = d.description.upper()
+        # PAYMENT RECEIVED + travel refunds, both of which appear in the
+        # "New Payments" section and roll up to "Less Payments" in the header.
+        return "PAYMENT RECEIVED" in u or "AMERICAN EXPRESS TRAVEL" in u
+    def _is_other_credit(d): return "WITH POINTS" in d.description.upper()
+    def _is_fee(d): return "MEMBERSHIP FEE INSTALLMENT" in d.description.upper()
+
+    payments_sum = sum((d.amount for d in details if _is_payment(d)), Decimal("0"))
+    other_credits_sum = sum((d.amount for d in details if _is_other_credit(d)), Decimal("0"))
+    if abs(payments_sum) + abs(other_credits_sum) != header.payments_and_credits:
+         issues.append(
+             f"payments_and_credits: header={header.payments_and_credits} "
+             f"detail_sum={abs(payments_sum) + abs(other_credits_sum)}"
+         )
+
+    purchases_sum = sum(
+        (d.amount for d in details if not _is_payment(d) and not _is_fee(d) and not _is_other_credit(d)),
+        Decimal("0"),
+    )
     if purchases_sum != header.purchases_and_other_charges:
         issues.append(f"purchases_and_other_charges: header={header.purchases_and_other_charges} detail_sum={purchases_sum}")
 
