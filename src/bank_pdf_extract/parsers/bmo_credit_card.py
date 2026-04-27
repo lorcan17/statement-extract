@@ -20,7 +20,9 @@ _MONTHS = {m: i for i, m in enumerate(
 _M = "(?:" + "|".join(_MONTHS) + ")"
 
 _LONG_DATE = re.compile(rf"({_M})\.?\s+(\d{{1,2}}),\s+(\d{{4}})")
-_TRANS_HEAD = re.compile(rf"^({_M})\.?\s+(\d{{1,2}})\s+({_M})\.?\s+(\d{{1,2}})\s+(.+)$")
+# Trans-day → post-month separator allows zero whitespace ("Dec. 10Dec. 10"):
+# pdfplumber occasionally drops that gap when the columns are tightly packed.
+_TRANS_HEAD = re.compile(rf"^({_M})\.?\s+(\d{{1,2}})\s*({_M})\.?\s+(\d{{1,2}})\s+(.+)$")
 _AMOUNT_TAIL = re.compile(r"^(.*)\s+([\d,]+\.\d{2})(\s+CR)?(?:\s+.+)?\s*$")
 _FX_PREFIX = re.compile(r"^([A-Z]{3})\s+([\d,]+\.\d{2})@([\d.]+)\s+(.+)$")
 
@@ -56,8 +58,16 @@ def validate_internal(header: CreditCardHeader, details: list[CreditCardDetail])
     """Return discrepancies between header totals and detail rows. Empty = OK."""
     issues: list[str] = []
 
-    credits = sum((d.amount for d in details if d.amount < 0), Decimal("0"))
-    charges = sum((d.amount for d in details if d.amount > 0), Decimal("0"))
+    # Most rows split cleanly by sign, but a dishonoured payment shows up as
+    # both `AUTOMATIC PYMT RECEIVED` (negative) and `PAYMENT ADJUSTMENT`
+    # (positive reversal). BMO nets these into `Payments and credits`, not
+    # into charges — so route any "PAYMENT ADJUSTMENT/REVERSAL" row into the
+    # credits bucket regardless of sign.
+    def _is_credit_side(d):
+        u = d.description.upper()
+        return d.amount < 0 or "PAYMENT ADJUSTMENT" in u or "PAYMENT REVERSAL" in u
+    credits = sum((d.amount for d in details if _is_credit_side(d)), Decimal("0"))
+    charges = sum((d.amount for d in details if not _is_credit_side(d)), Decimal("0"))
 
     # Detail rows lump every "cost to cardholder" transaction together
     # (purchases + fees + interest + cash advances + installments).
@@ -282,12 +292,15 @@ def _parse_long_date(s: str) -> date:
 
 def _money_after(text: str, prefix: str, *, default: Decimal | None = None) -> Decimal:
     flags = re.MULTILINE if prefix.startswith("^") else 0
-    m = re.search(prefix + r"([+-]?\$?[\d,]+\.\d{2})", text, flags)
+    m = re.search(prefix + r"([+-]?\$?[\d,]+\.\d{2})(\s+CR\b)?", text, flags)
     if not m:
         if default is not None:
             return default
         raise ValueError(f"amount not found after: {prefix!r}")
-    return _parse_money(m.group(1))
+    amount = _parse_money(m.group(1))
+    if m.group(2):
+        amount = -amount
+    return amount
 
 
 def _parse_money(s: str) -> Decimal:
